@@ -1,63 +1,144 @@
-const {initialize,
-    getAllPosts,
-    getPublishedPosts,
-    getCategories} = require('./blog-service');
-
+/*********************************************************************************
+*  WEB322 – Assignment 03
+*  I declare that this assignment is my own work in accordance with Seneca  Academic Policy.  No part 
+*  of this assignment has been copied manually or electronically from any other source 
+*  (including 3rd party web sites) or distributed to other students.
+* 
+*  Name: Jainam Hareshkumar Prajapati
+*  Student ID: 162121214       
+*  Date: 22 February, 2023
+*
+*  Online (Cyclic) Link: https://lime-donkey-slip.cyclic.app/
+*
+********************************************************************************/
 const express = require('express');
+const blogData = require("./blog-service");
+const multer = require("multer");
+const cloudinary = require('cloudinary').v2;
+const streamifier = require('streamifier');
+const path = require("path");
 const app = express();
 
-// Use the static middleware to serve files from the public folder
+const HTTP_PORT = process.env.PORT || 8080;
+
+cloudinary.config({
+    cloud_name: 'Cloud Name',
+    api_key: 'API Key',
+    api_secret: 'API Secret',
+    secure: true
+});
+
+const upload = multer();
+
 app.use(express.static('public'));
-const port = process.env.PORT || 8080;
 
-// Redirect the "/" route to the "/about" route
 app.get('/', (req, res) => {
-    res.redirect('/about');
+    res.redirect("/about");
 });
 
-// Serve the about.html file on the "/about" route
 app.get('/about', (req, res) => {
-    res.sendFile(__dirname + '/views/about.html');
+    res.sendFile(path.join(__dirname, "/views/about.html"))
 });
 
-app.get('/blog', function(req, res) {
-    getPublishedPosts().then((data) => {
-        res.send(data);
-    })
-    .catch((err) => {
-        res.send(err);
-    })
+app.get('/blog', (req,res)=>{
+    blogData.getPublishedPosts().then((data=>{
+        res.json(data);
+    })).catch(err=>{
+        res.json({message: err});
     });
+});
+
+app.get('/posts', (req,res)=>{
+
+    let queryPromise = null;
+
+    if(req.query.category){
+        queryPromise = blogData.getPostsByCategory(req.query.category);
+    }else if(req.query.minDate){
+        queryPromise = blogData.getPostsByMinDate(req.query.minDate);
+    }else{
+        queryPromise = blogData.getAllPosts()
+    } 
+
+    queryPromise.then(data=>{
+        res.json(data);
+    }).catch(err=>{
+        res.json({message: err});
+    })
+
+});
+
+app.post("/posts/add", upload.single("featureImage"), (req,res)=>{
+
+    if(req.file){
+        let streamUpload = (req) => {
+            return new Promise((resolve, reject) => {
+                let stream = cloudinary.uploader.upload_stream(
+                    (error, result) => {
+                        if (result) {
+                            resolve(result);
+                        } else {
+                            reject(error);
+                        }
+                    }
+                );
     
-    app.get('/posts', function(req, res) {
-    getAllPosts().then((data) => {
-        res.send(data);
-    })
-    .catch((err) => {
-        res.send(err);
-    })
+                streamifier.createReadStream(req.file.buffer).pipe(stream);
+            });
+        };
+    
+        async function upload(req) {
+            let result = await streamUpload(req);
+            console.log(result);
+            return result;
+        }
+    
+        upload(req).then((uploaded)=>{
+            processPost(uploaded.url);
+        });
+    }else{
+        processPost("");
+    }
+
+    function processPost(imageUrl){
+        req.body.featureImage = imageUrl;
+
+        blogData.addPost(req.body).then(post=>{
+            res.redirect("/posts");
+        }).catch(err=>{
+            res.status(500).send(err);
+        })
+    }   
+});
+
+app.get('/posts/add', (req,res)=>{
+   res.sendFile(path.join(__dirname, "/views/addPost.html"));
+}); 
+
+app.get('/post/:id', (req,res)=>{
+    blogData.getPostById(req.params.id).then(data=>{
+        res.json(data);
+    }).catch(err=>{
+        res.json({message: err});
     });
-    
-    app.get('/categories', function(req, res) {
-        getCategories ().then((data) => {
-            res.send(data);
-        })
-        .catch((err) => {
-            res.send(err);
-        })
-        });
-
-    app.use(function(req, res) {
-        res.status(404).send("Page Not Found");
-        });
-
-        module.exports = app;
-// Listen on the specified port and output a message to the console
-
-initialize().then(() => {
-app.listen(port, () => {
-console.log(`Server running at http://localhost:${port}`);
 });
-}).catch((error) => {
-console.error(`Error starting server: ${error}`);
+
+app.get('/categories', (req,res)=>{
+    blogData.getCategories().then((data=>{
+        res.json(data);
+    })).catch(err=>{
+        res.json({message: err});
+    });
 });
+
+app.use((req,res)=>{
+    res.status(404).send("404 - Page Not Found")
+})
+
+blogData.initialize().then(()=>{
+    app.listen(HTTP_PORT, () => { 
+        console.log('server listening on: ' + HTTP_PORT); 
+    });
+}).catch((err)=>{
+    console.log(err);
+})
